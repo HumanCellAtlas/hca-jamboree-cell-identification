@@ -1,0 +1,72 @@
+---
+title: "Naive Classifier"
+author: "Will Townes"
+date: "8/2/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We use a threshold based on first fitting a 2 component finite mixture model then placing the threshold at the halfway point between the two means
+
+```{r}
+library(tidyverse) #dplyr ggplot etc
+library(mclust) #clustering
+library(SDMTools) #confusion matrix
+
+entropy<-function(x){
+  lfrq<-log(x)-log(sum(x))
+  sum(exp(lfrq + log(-lfrq)))
+}
+
+nsim<-16
+
+for(i in seq.int(nsim)){
+  print(paste("Now clustering data for simulation",i))
+  d<-readRDS(paste0("task1_simu.filtered/simu_",i,".rds"))
+  d2<-d %>% group_by(barcode) %>% summarise(tc=sum(count),h=entropy(count),l2tc=log2(tc),simulation=i)
+  #plot(density(d2$l2tc))
+  cl<-Mclust(d2$l2tc,G=c(2,3))
+  d2<-d2 %>% mutate(cl=factor(cl$classification))
+  #ggplot(d2,aes(x=cl,y=l2tc))+geom_boxplot()
+  #ggplot(d2,aes(x=l2tc,fill=cl))+geom_density()
+  real_cell_cluster<-which.max(cl$parameters$mean)
+  d2<-d2 %>% mutate(pred_cell= (cl==real_cell_cluster) )
+  #save result
+  write.table(d2,paste0("simu_predictions/",i,".tsv"),row.names=FALSE)
+}
+cnames<-c("barcode","tc","simulation","pred_cell","mode","true_cell")
+for(i in seq.int(nsim)){
+  d2<-read.table(paste0("simu_predictions/",i,".tsv"),header=TRUE)
+  #compare clustering to ground truth
+  tr<-read_csv(paste0("truth/ssimu/real_",i))
+  colnames(tr)[1]<-"barcode"
+  d2<-left_join(d2,tr,by="barcode")
+  d2$mode[is.na(d2$mode)]<-0
+  d2$true_cell<- (d2$mode>0)
+  write.table(d2[,cnames],paste0("../task1_submissions/group1/cell_predictions/",i,".tsv"))
+}
+```
+
+## Evaluate Performance
+
+```{r}
+compute_diagnostics<-function(i){
+  d2<-read.table(paste0("../task1_submissions/group1/cell_predictions/",i,".tsv"))
+  ct<-with(d2,table(pred_cell,true_cell))
+  ct<-ct/sum(ct)
+  res<-data.frame(simu=i)
+  res$sens<-ct["TRUE","TRUE"]/sum(ct[,"TRUE"])
+  res$spec<-ct["FALSE","FALSE"]/sum(ct[,"FALSE"])
+  res$misclass_err<-1-sum(diag(ct))
+  return(res)
+}
+res<-do.call("rbind",lapply(seq.int(nsim),compute_diagnostics))
+res$accuracy<-1-res$misclass_err
+write.table(res,"../task1_submissions/group1/diagnostic_results.tsv",row.names=FALSE)
+res2<-reshape2::melt(res,"simu",c("sens","spec","accuracy"),variable.name="diagnostic")
+ggplot(res2,aes(x=factor(simu),y=value))+geom_boxplot()+facet_wrap(~diagnostic)+theme_bw()+xlab("simulation index")
+ggsave("../task1_submissions/group1/diagnostic_plot.pdf")
+```
