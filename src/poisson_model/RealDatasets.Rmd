@@ -1,0 +1,249 @@
+---
+title: "Real data applications"
+output: html_notebook
+---
+
+
+
+# Startup
+Load libraries
+
+```{r}
+library(ggplot2)
+library(Matrix)
+library(gridExtra)
+```
+
+
+
+# Load and format data
+Conversion to RDS - pbmc  
+  
+In folder 10x_pbmc, run convert.sh
+
+Conversion to RDS - Ye dataset1  
+  
+In folder Ye_doublet_dataset1, run convert.sh
+
+Conversion to RDS - Ye dataset2
+
+In folder Ye_doublet_dataset2, run convert.sh
+
+
+
+Load RDS'
+
+```{r}
+pbmc = readRDS("../realdata/10x_pbmc/10x_pbmc.mat.RDS")
+ye_ds1 = readRDS("../realdata/Ye_doublet_dataset1/Ye_doublet_dataset1.mat.RDS")
+ye_ds2 = readRDS("../realdata/Ye_doublet_dataset2/Ye_doublet_dataset2.mat.RDS")
+
+ds_list = list("PBMC" = pbmc, "Ye1"= ye_ds1, "Ye2" = ye_ds2)
+```
+
+
+# Run and load empty droplet modeling
+Fitting model for empty droplets (run in terminal, RStudio might crash)
+
+Rscript ../betterfit/gamma_fitter.R ./10x_pbmc/10x_pbmc.mat.RDS 10x_pbmc_res
+Rscript ../betterfit/gamma_fitter.R ./Ye_doublet_dataset1/Ye_doublet_dataset1.
+mat.RDS Ye_doublet_dataset1
+Rscript ../betterfit/gamma_fitter.R ./Ye_doublet_dataset2/Ye_doublet_dataset2.
+mat.RDS Ye_doublet_dataset2
+
+
+
+Load modeling results
+
+```{r}
+pbmc_res = read.table("../realdata/10x_pbmc/10x_pbmc_res.tsv", 
+                       sep = "\t", header = T, row.names = 1)
+ye1_res = read.table("../realdata/Ye_doublet_dataset1/Ye_doublet_dataset1.tsv", 
+                       sep = "\t", header = T, row.names = 1)
+ye2_res = read.table("../realdata/Ye_doublet_dataset2/Ye_doublet_dataset2.tsv", 
+                       sep = "\t", header = T, row.names = 1)
+fdr_list = list("PBMC" = pbmc_res, "Ye1" = ye1_res, "Ye2" = ye2_res)
+```
+
+
+
+Plot FDR distributions
+
+```{r}
+pdf("FDR_distributions.pdf", useDingbats = F, height = 5, width = 5)
+for(n in names(fdr_list)){
+  plot_df = fdr_list[[n]]
+  dist_plt = ggplot(plot_df, aes(x = FDR))+
+    geom_density()+
+    scale_x_continuous(expand = c(0,0))+
+    scale_y_continuous(expand = c(0,0))+
+    geom_vline(xintercept = 0.05, colour = "red")+
+    ggtitle(n)+
+    theme_classic()+
+    theme(axis.text = element_text(colour = "black"))
+  print(dist_plt)
+}
+dev.off()
+```
+
+
+Windows of total UMIs, empty/not-empty ratios
+
+```{r}
+pdf("./UMI_windows_ratio_sig.pdf", useDingbats = F, height = 5, width = 5)
+window_list = list()
+for(n in names(ds_list)){
+  total.umis = colSums(ds_list[[n]])
+  sorted_fdr = fdr_list[[n]][colnames(ds_list[[n]]),]
+  isSig = sorted_fdr<0.05
+  
+  windows = Hmisc::cut2(total.umis, g = 200)
+  ratios = unlist(lapply(tapply(factor(isSig, levels = c("TRUE", "FALSE")), 
+                                windows, table), 
+                         function(x) x[1]/x[2]))
+  
+  plot_df = data.frame("windows" = levels(windows),
+                       "ratios" = ratios)
+  dist_plt = ggplot(plot_df, aes(x = windows, y = ratios, group = 1))+
+    geom_point()+geom_line()+
+    ggtitle(n)+
+    theme_classic()+
+    theme(axis.text = element_text(colour = "black"))
+  
+  print(dist_plt)
+  window_list[[n]] = dist_plt
+}
+dev.off()
+lapply(window_list , grid.arrange)
+```
+
+
+
+# Dimensionality reduction
+Run PCA on all datasets. Using top 5000 CV genes
+
+```{r}
+pca_list = list()
+sub_obs_list = list()
+for(n in names(ds_list)){
+  for(umitot in c(100, 250, 1000, 10000000)){
+      sub_obs = ds_list[[n]][,!is.na(fdr_list[[n]]$FDR)]
+      sub_obs = sub_obs[,fdr_list[[n]]$FDR[!is.na(fdr_list[[n]]$FDR)]<0.05 |
+                               colSums(sub_obs)>umitot]
+      sd_genes = apply(sub_obs, 1, sd)
+      cv_genes = sd_genes/rowSums(sub_obs)
+      cv_genes = cv_genes[order(cv_genes, decreasing = T)]
+      genes_var = names(sd_genes)[1:5000]
+      sub_obs = sub_obs[genes_var,]
+      sub_obs_list[[paste0(n, "_", umitot)]] = sub_obs
+      
+      scaled_data = t(scale(t(sub_obs)/colSums(sub_obs), center = T, scale = F))
+      pca_list[[paste0(n, "_", umitot)]] = irlba::prcomp_irlba(t(scaled_data), 
+                                                               n = 50)
+  }
+}
+saveRDS(pca_list, file = "pca_list.RDS")
+```
+
+
+
+Plot PCA
+
+```{r}
+pdf("./PCA_plots.pdf", height = 5, width = 5, useDingbats = F)
+pca_plt_list = list()
+for(n in names(pca_list)){
+  nds = strsplit(n, "_")[[1]][1]
+  plot_df = data.frame(pca_list[[n]]$x)
+  plot_df$empty = ifelse(colnames(sub_obs_list[[n]]) %in% rownames(fdr_list[[nds]])[fdr_list[[nds]]$FDR>=0.05], 
+                         "empty", "not-empty")
+  
+  #plot_df = plot_df[order(plot_df$empty, decreasing = F),]
+  
+  pca_plt = ggplot(plot_df, aes(x = PC1, y = PC2, colour = empty, shape = empty))+
+    geom_point()+
+    ggtitle(n)+
+    scale_shape_manual(values = c(1, 19))+
+    scale_colour_manual(values = c("black", "firebrick"))+
+    theme_classic()+
+    theme(legend.position = "bottom",
+          axis.text = element_text(colour = "black"))
+  print(pca_plt)
+  write.table(pca_list[[n]]$x, file = paste0("./pca_results", n, ".txt"), 
+              sep = ",", row.names = F, col.names = T, quote = F)
+  
+  pca_plt_list[[n]] = pca_plt
+}
+dev.off()
+lapply(pca_plt_list, grid.arrange)
+```
+
+
+
+Run tSNE (in python because it is faster)
+
+```{python}
+from sklearn.manifold import TSNE
+import pandas as pd
+
+from os import listdir
+from os.path import isfile, join
+mypath = "./"
+onlyfiles = [f for f in listdir(mypath) if isfile(join(mypath, f)) and "pca" in f]
+
+print onlyfiles
+
+for f in onlyfiles:
+  pca_res = pd.read_csv(f, index_col=0, header = 0)
+  
+  model = TSNE(n_components=2, random_state=0)
+  
+  tsne_res = model.fit_transform(pca_res) 
+  
+  pd.DataFrame(tsne_res).to_csv(f+"_tsne.txt")
+```
+
+
+
+Load tSNE results
+
+```{r}
+tsne_list = list()
+for(n in names(pca_list)){
+  tsne_list[[n]] = read.table(paste0("./pca_results", n, ".txt_tsne.txt"), 
+                              sep = ",", header = T, row.names = 1)
+  colnames(tsne_list[[n]]) = c("dim1", "dim2")
+}
+```
+
+
+
+Plot tSNE
+
+```{r}
+pdf("./tSNE_plots.pdf", height = 5, width = 5, useDingbats = F)
+tsne_plt_list = list()
+for(n in names(pca_list)){
+  nds = strsplit(n, "_")[[1]][1]
+  plot_df = data.frame(tsne_list[[n]])
+  plot_df$empty = ifelse(colnames(sub_obs_list[[n]]) %in% rownames(fdr_list[[nds]])[fdr_list[[nds]]$FDR>=0.05], 
+                         "empty", "not-empty")
+  
+  #plot_df = plot_df[order(plot_df$empty, decreasing = F),]
+  
+  tsne_plt = ggplot(plot_df, aes(x = dim1, y = dim2, colour = empty, shape = empty))+
+    geom_point(alpha = 0.65)+
+    ggtitle(n)+
+    scale_shape_manual(values = c(1, 19))+
+    scale_colour_manual(values = c("black", "firebrick"))+
+    theme_classic()+
+    theme(legend.position = "bottom",
+          axis.text = element_text(colour = "black"))
+  print(tsne_plt)
+  
+  tsne_plt_list[[n]] = tsne_plt
+}
+dev.off()
+lapply(tsne_plt_list, grid.arrange)
+```
+
