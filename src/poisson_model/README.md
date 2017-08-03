@@ -31,3 +31,4 @@ All barcodes detected at a FDR of 5% were called as real cells.
 
 - `model_fitter.R`, a script that computes adjusted p-values for all cells.
 - `sparse_maker.R`, a script that generates serialized sparse matrices for use in model fitting.
+- `Check_Results_qvalue.R`, a script that computes true positives, false positives, and false negatives for simulated data.
