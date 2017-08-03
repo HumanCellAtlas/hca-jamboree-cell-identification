@@ -20,6 +20,11 @@ ambient.prof <- rowSums(ambient.cells)
 library(edgeR)
 ambient.prop <- goodTuringProportions(ambient.prof)
 
+# Removing cells from the ambient.
+
+original <- m
+m <- m[,!ambient]
+
 # Calculating the likelihood ratio.
 
 library(methods)
@@ -52,71 +57,67 @@ LRFUN <- function(observed, prop) {
    p.perfect.sum <- colSums(p.perfect.mat)
 
    return(p.perfect.sum - (p.n0.sum + p.0.sum))
-
-#   grouping <- cut(seq_len(ncol(observed)), max(2, ceiling(ncol(observed)/100)))
-#   output <- numeric(ncol(observed))
-#   for (g in levels(grouping)) { 
-#       chosen <- grouping == g
-#       M <- as.matrix(observed[,chosen,drop=FALSE])
-#       expected <- outer(ambient.prop, colSums(M))
-#       output[chosen] <- colSums(dpois(M, lambda=M, log=TRUE)) - colSums(dpois(M, lambda=expected, log=TRUE))
-#   }
-#   return(output)
 }
 
-N <- 10000
-test.totals <- 2^seq(from=0, to=log2(max(colSums(m))), length.out=N)
-sim <- as(matrix(rpois(length(ambient.prop)*N, outer(ambient.prop, test.totals)), ncol=N), "dgCMatrix")
-sim.LR <- LRFUN(sim, prop=ambient.prop)
-
 obs <- m
+obs.totals <- colSums(obs)
 obs.LR <- LRFUN(obs, prop=ambient.prop)
+
+N <- 20000
+sim.totals <- 2^seq(from=log2(min(obs.totals))-1, to=log2(max(obs.totals))+1, length.out=N)
+sim <- as(matrix(rpois(length(ambient.prop)*N, outer(ambient.prop, sim.totals)), ncol=N), "dgCMatrix")
+sim.LR <- LRFUN(sim, prop=ambient.prop)
 
 # Modelling the total-dependent trend in the LR (and the variance around the trend).
 
-lmeans <- log(colSums(sim))
-keep <- is.finite(lmeans)
-lmeans.keep <- lmeans[keep]
-sim.LR.keep <- sim.LR[keep]
-trend.fit <- loess(sim.LR.keep ~ lmeans.keep, span=0.3, degree=1)
-mean.FUN <- function(total) {
-    ltotal <- pmin(log(total), max(lmeans.keep))
-    predict(trend.fit, data.frame(lmeans.keep=ltotal))
+log.totals <- log(sim.totals)
+trend.fit <- loess(sim.LR ~ log.totals, span=0.2, degree=1)
+trend.FUN <- function(total) {
+    ltotal <- pmin(log(total), max(log.totals))
+    predict(trend.fit, data.frame(log.totals=ltotal))
 }
 
-spread <- log(sim.LR.keep/fitted(trend.fit))
-by.mean <- cut(lmeans.keep, 50)
-bin.var <- unlist(lapply(split(spread, by.mean), var))
-bin.mean <- unlist(lapply(split(lmeans.keep, by.mean), mean))
-var.FUN <- approxfun(bin.mean, bin.var, rule=2)
+spread <- sim.LR/fitted(trend.fit)
+f <- cut(log.totals, 50)
+by.total <- split(spread, f)
+
+bin.var <- unlist(lapply(by.total, var))
+bin.mean <- unlist(lapply(by.total, mean))
+bin.x <- unlist(lapply(split(log.totals, f), mean))
+var.FUN <- splinefun(y=bin.var, x=bin.x)
+mean.FUN <- splinefun(y=bin.mean, x=bin.x)
+
+# Computing a p-value for each observed value.
 
 getPValue <- function(total, LR) {
-    dev <- log(LR/mean.FUN(total))
-    pnorm(dev, mean=0, sd=sqrt(var.FUN(log(total))), lower=FALSE)
+    # Getting the expected value.
+    fitted <- trend.FUN(total)
+
+    # Getting the parameters of the "bin" around it. 
+    ltotal <- log(total)
+    cur.var <- var.FUN(ltotal)
+    cur.mean <- mean.FUN(ltotal)
+
+    # Modelling with a gamma distribution
+    rate <- cur.mean/cur.var
+    shape <- rate * cur.mean
+
+    pgamma(LR/fitted, rate=rate, shape=shape, lower.tail=FALSE)
 }
 
-
-#y <- numeric(nlevels(group))
-#for (i in seq_len(nlevels(group))) {
-#    p <- sum(dnbinom(x[[i]], lambda=ambient.prop * sum(x[[i]], size=5), log=TRUE))
-#    y[i] <- p
-#}
-
-obs.totals <- colSums(obs)
 p <- getPValue(obs.totals, obs.LR)
-p[obs.totals < 250] <- NA # Killing these guys.
 fdr <- p.adjust(p, method="BH")
-fdr[is.na(fdr)] <- 1
+all.fdr <- rep(1, nrow(original))
+all.fdr[!ambient] <- fdr
 
-write.table(data.frame(Cell=colnames(m), FDR=fdr), file=paste0(outfix, ".tsv"),
+write.table(data.frame(Cell=colnames(original), FDR=all.fdr), file=paste0(outfix, ".tsv"),
 	    quote=FALSE, sep="\t", row.names=FALSE, col.names=TRUE)
 
 # Making a pretty plot.
 
 sig <- fdr <= 0.05
 png(paste0(outfix, ".png"), width=12, height=12, units="in", pointsize=12, res=120)
-plot(colSums(obs), obs.LR, log="x", col=ifelse(sig, "red", "black"))
-curve(mean.FUN(x), col="dodgerblue", add=TRUE)
-#points(colSums(sim), sim.LR, col="dodgerblue")
+plot(obs.totals, obs.LR, log="x", col=ifelse(sig, "red", "black"))
+curve(trend.FUN(x), col="dodgerblue", add=TRUE)
 legend("topleft", sprintf("%.2f", sum(sig)/length(sig) * 100), bty="n")
 dev.off()
