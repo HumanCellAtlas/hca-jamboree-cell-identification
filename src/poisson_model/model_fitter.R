@@ -22,8 +22,8 @@ ambient.prop <- goodTuringProportions(ambient.prof)
 
 # Removing cells from the ambient.
 
-original <- m
 m <- m[,!ambient]
+gc()
 
 # Calculating the likelihood ratio.
 
@@ -42,70 +42,55 @@ LRFUN <- function(observed, prop) {
    }
   
    total <- colSums(observed)
-   p.n0 <- dpois(x, lambda=prop[i] * total[j], log=TRUE) - dpois(0, lambda=prop[i] * total[j], log=TRUE) 
-   p.n0.mat <- sparseMatrix(i=i, j=j, x=p.n0, dims=c(nrow(observed), ncol(observed)))
-   p.n0.sum <- colSums(p.n0.mat)
-
-   all.totals <- unique(total)
-   p.0 <- matrix(dpois(0, lambda=outer(prop, all.totals), log=TRUE), nrow=length(prop), ncol=length(all.totals))
-   p.0.sum_x <- colSums(p.0)
-   p.0.sum <- p.0.sum_x[match(total, all.totals)]
-   
-   # Likelihood of a perfit fit (no need to deal with zeroes, as these have likelihood=1).
-   p.perfect <- dpois(x, lambda=x, log=TRUE) 
-   p.perfect.mat <- sparseMatrix(i=i, j=j, x=p.perfect, dims=c(nrow(observed), ncol(observed)))
-   p.perfect.sum <- colSums(p.perfect.mat)
-
-   return(p.perfect.sum - (p.n0.sum + p.0.sum))
+   p.n0 <- x * log(x/(prop[i]*total[j])) - x # Poisson deviance for observed count - deviance for a zero count.
+   by.col <- aggregate(p.n0, list(Col=j), sum)
+   p.n0.sum <- numeric(length(total))
+   p.n0.sum[by.col$Col] <- by.col$x
+   p.0.sum <- total # colsum deviance for zero counts for all entries => colsum of means => totals.
+   return(p.n0.sum + p.0.sum)
 }
 
 obs <- m
 obs.totals <- colSums(obs)
 obs.LR <- LRFUN(obs, prop=ambient.prop)
 
-N <- 20000
-sim.totals <- 2^seq(from=log2(min(obs.totals))-1, to=log2(max(obs.totals))+1, length.out=N)
-sim <- as(matrix(rpois(length(ambient.prop)*N, outer(ambient.prop, sim.totals)), ncol=N), "dgCMatrix")
-sim.LR <- LRFUN(sim, prop=ambient.prop)
+# Computing a simulation with 100000 entries for any "tol"-fold interval around the interrogation point..
 
-# Modelling the total-dependent trend in the LR (and the variance around the trend).
+tol <- 0.5
+lower.pt <- log2(min(obs.totals))-tol
+upper.pt <- log2(max(obs.totals))+tol
+N <- round(1000 * (upper.pt - lower.pt)/(2*tol))
+sim.totals <- 2^seq(from=lower.pt, to=upper.pt, length.out=N)
 
-log.totals <- log(sim.totals)
-trend.fit <- loess(sim.LR ~ log.totals, span=0.2, degree=1)
-trend.FUN <- function(total) {
-    ltotal <- pmin(log(total), max(log.totals))
-    predict(trend.fit, data.frame(log.totals=ltotal))
+sim.LR <- numeric(N)
+for (x in seq_along(sim.LR)) {
+    cur.means <- ambient.prop*sim.totals[x]
+    current <- rpois(length(ambient.prop), lambda=cur.means)
+    sim.LR[x] <- sum(current * log(current/cur.means), na.rm=TRUE) + sum(cur.means - current)
 }
 
-spread <- sim.LR/fitted(trend.fit)
-f <- cut(log.totals, 50)
-by.total <- split(spread, f)
+# Modelling the total-dependent trend in the simulated LR (and the variance around the trend).
 
-bin.var <- unlist(lapply(by.total, var))
-bin.mean <- unlist(lapply(by.total, mean))
-bin.x <- unlist(lapply(split(log.totals, f), mean))
-var.FUN <- splinefun(y=bin.var, x=bin.x)
-mean.FUN <- splinefun(y=bin.mean, x=bin.x)
+log.totals <- log(sim.totals)
+trend.fit <- lowess(x=log.totals, y=sim.LR, f=0.2)
+expected.LR <- spline(trend.fit$x, trend.fit$y, xout=log(obs.totals))$y
+
+spread <- sim.LR/trend.fit$y
+plot(sim.totals, spread, log="x")
+abline(h=1, col="red")
 
 # Computing a p-value for each observed value.
 
-getPValue <- function(total, LR) {
-    # Getting the expected value.
-    fitted <- trend.FUN(total)
+plot(obs.totals, obs.LR, log="x")
+points(obs.totals, expected.LR, col="red", pch=16, cex=0.2)
 
-    # Getting the parameters of the "bin" around it. 
-    ltotal <- log(total)
-    cur.var <- var.FUN(ltotal)
-    cur.mean <- mean.FUN(ltotal)
-
-    # Modelling with a gamma distribution
-    rate <- cur.mean/cur.var
-    shape <- rate * cur.mean
-
-    pgamma(LR/fitted, rate=rate, shape=shape, lower.tail=FALSE)
+obs.spread <- obs.LR/expected.LR
+p <- numeric(length(obs.LR))
+for (x in seq_along(p)) {
+    current <- obs.totals[x]*sqrt(2) >= sim.totals & obs.totals[x]/sqrt(2) <= sim.totals
+    p[x] <- (sum(spread[current] > obs.spread[x]) + 1)/(sum(current)+1)
 }
 
-p <- getPValue(obs.totals, obs.LR)
 fdr <- p.adjust(p, method="BH")
 all.fdr <- rep(1, nrow(original))
 all.fdr[!ambient] <- fdr
