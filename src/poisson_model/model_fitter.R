@@ -98,7 +98,7 @@ findInflectionPoint <- function(m, lower=250)
     return(unname(exp(threshold)))
 }
 
-detectCells <- function(m, lower=250, ...) 
+detectCells <- function(m, lower=250, scale=2, ...) 
 # Combined function that puts these all together, always keeping cells above the inflection
 # point (they are given p-values of 0, as they are always rejected). 
 # 
@@ -107,13 +107,9 @@ detectCells <- function(m, lower=250, ...)
 {
     stats <- computePValue(m, lower=lower, ...)
     inflection <- findInflectionPoint(m, lower=lower)
-
-    always <- stats$Total >= inflection
-    high.ab <- log(stats$Total[always])
-    min.threshold <- exp(median(high.ab) - mad(high.ab))
-
+    always <- stats$Total >= inflection*scale
     tmp <- stats$PValue
-    tmp[stats$Total >= min.threshold] <- 0
+    tmp[always] <- 0
     stats$FDR <- p.adjust(tmp, method="BH")
     return(stats)
 }
