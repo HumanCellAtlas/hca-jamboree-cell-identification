@@ -1,8 +1,8 @@
-source("model_fitter.R")
+library(EmptyDrops)
 m <- readRDS("simu_1.mat.RDS")
-out <- detectCells(m, npts=1000)
+out <- detectCells(m, npts=10000)
 
-sig <- out$FDR <= 0.001 & !is.na(out$FDR)
+sig <- out$FDR <= 0.05 & !is.na(out$FDR)
 png("simu_1.png", width=12, height=12, units="in", pointsize=12, res=120)
 plot(out$Total, out$LR, log="x", col=ifelse(sig, "red", "black"))
 o <- order(out$Total)
