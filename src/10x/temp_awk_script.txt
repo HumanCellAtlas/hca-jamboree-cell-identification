@@ -1,0 +1,8 @@
+# awk script for filtering 10x data
+# run from directory ~ 
+
+gunzip -c jamboree/10x_pbmc/counts/pbmc8k_S1_L007_merged_1.raw.gz | awk -F"\t" '$3 != "" { print $0}' > share
+d_scratch/group1/10x/pbmc8k_S1_L007_merged_1_raw_coding.tsv
+
+gunzip -c jamboree/10x_pbmc/counts/pbmc8k_S1_L008_merged_1.raw.gz | awk -F"\t" '$3 != "" { print $0}' > share
+d_scratch/group1/10x/pbmc8k_S1_L008_merged_1_raw_coding.tsv

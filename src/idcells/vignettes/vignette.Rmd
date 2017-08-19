@@ -1,0 +1,229 @@
+---
+title: "ID cells"
+author:
+- name: "Group 1"
+  affiliation: 
+  - EMBL-EBI
+package: scater
+output:
+    BiocStyle::html_document2
+vignette: >
+  %\VignetteIndexEntry{ID cells}
+  %\VignetteEngine{knitr::rmarkdown}
+  %VignetteEncoding{UTF-8}
+---
+
+
+```{r knitr-options, echo=FALSE, message=FALSE, warning=FALSE}
+## To render an HTML version that works nicely with github and web pages, do:
+## rmarkdown::render("vignettes/vignette.Rmd", "all")
+library(knitr)
+opts_chunk$set(fig.align = 'center', fig.width = 6, fig.height = 5, dev = 'png')
+library(tidyverse)
+theme_set(theme_bw(12))
+library(pryr)
+library(idcells)
+library(ggthemes)
+```
+
+```{r}
+getwd()
+```
+
+```{r}
+df_simu_1 <- readRDS("../../task1_simu.filtered/simu_1.rds")
+head(df_simu_1)
+```
+
+```{r}
+mat_simu_1 <- df2sparse(df_simu_1)
+dim(mat_simu_1)
+set.seed(101)
+mat_simu_1_small <- mat_simu_1[, sample(x = 1:ncol(mat_simu_1), size = 10000)]
+
+```
+
+
+```{r}
+bcstats_simu_1 <- get_barcode_stats(as.matrix(mat_simu_1))
+head(bcstats_simu_1)
+```
+
+```{r}
+bcstats_simu_1_small <- get_barcode_stats(as.matrix(mat_simu_1_small))
+head(bcstats_simu_1_small)
+```
+
+```{r}
+library(ineq)
+gi <- apply(mat_simu_1_small, 2, Gini)
+bcstats_simu_1_small <- mutate(bcstats_simu_1_small, gini = gi)
+```
+
+```{r}
+ggplot(bcstats_simu_1_small, aes(x = log10(total_counts), y = gini)) +
+    geom_point() + theme_bw()
+
+```
+
+
+```{r}
+library(scater)
+pd <- as(data.frame(barcode = colnames(mat_simu_1_small)), 
+         "AnnotatedDataFrame")
+rownames(pd) <- colnames(mat_simu_1_small)
+fd <- as(data.frame(gene_id = rownames(mat_simu_1_small)), 
+         "AnnotatedDataFrame")
+rownames(fd) <- rownames(mat_simu_1_small)
+sce <- newSCESet(countData = as.matrix(mat_simu_1_small), phenoData = pd,
+                 featureData = fd)
+ambient_bool <- read_tsv("../../ambient_genes.txt", col_names = FALSE)
+ambient_sparse <- read_tsv("../../ambient_genes.sparse.txt", col_names = FALSE)
+ambient_gene <- read_tsv("../../ambient_genes.gene_names.txt", col_names = FALSE)
+ambient <- bind_cols(ambient_gene, ambient_bool, ambient_sparse)
+table(ambient[[1]] %in% featureNames(sce))
+sce <- sce[(featureNames(sce) %in% ambient[[1]]),]
+ambient <- ambient[ambient[[1]] %in% featureNames(sce),]
+fData(sce)$ambient_gene_l2 <- ambient[[2]]
+fData(sce)$ambient_gene_l1 <- ambient[[3]]
+sce <- sce[rowSums(counts(sce)) > 0.5,]
+sce
+```
+
+```{r}
+sce <- calculateQCMetrics(sce, 
+                          feature_controls = list(ambient = fData(sce)$ambient_gene))
+```
+
+
+```{r}
+# library(scran)
+# sce <- computeSumFactors(sce)
+# #sce <- normalise(sce)
+# exprs(sce) <- log2(calculateCPM(sce, use.size.factors = FALSE) + 1)
+```
+
+
+```{r}
+sce <- plotPCA(sce, return_SCESet = TRUE, draw_plot = FALSE,
+               ntop = 1000, ncomponents = 30)
+```
+
+```{r}
+plotReducedDim(sce, colour_by = "log10_total_counts")
+```
+
+```{r}
+ggplot(fData(sce), aes(x = log10_total_feature_counts, y = n_cells_exprs,
+                       colour = ambient_gene_l1)) +
+    geom_point(alpha = 0.2) + theme_bw() + scale_color_tableau()
+```
+
+```{r}
+ggplot(fData(sce), aes(x = pct_total_counts, y = n_cells_exprs,
+                       colour = ambient_gene_l1)) +
+    geom_point(alpha = 0.2) + theme_bw() + scale_color_tableau()
+```
+
+
+```{r}
+sce$gini_all_genes <- apply(exprs(sce), 2, Gini)
+ubiq_genes <- featureNames(sce)[fData(sce)$n_cells_exprs > 2500]
+nonubiq_genes <- featureNames(sce)[fData(sce)$n_cells_exprs < 2500]
+sce$gini_ubiq_genes <- apply(exprs(sce)[ubiq_genes,], 2, Gini)
+sce$gini_nonubiq_genes <- apply(exprs(sce)[nonubiq_genes,], 2, Gini)
+sce$gini_ambient_genes_l1 <- apply(exprs(sce)[fData(sce)$ambient_gene_l1,], 2, Gini)
+sce$gini_ambient_genes_l2 <- apply(exprs(sce)[fData(sce)$ambient_gene_l2,], 2, Gini)
+```
+
+```{r}
+plotPCA(sce[fData(sce)$ambient_gene_l1,], colour_by = "log10_total_counts")
+```
+
+```{r}
+ggplot(pData(sce), aes(x = gini_all_genes, y = gini_ambient_genes_l1,
+                       colour = total_features)) +
+    geom_point() + viridis::scale_color_viridis()
+```
+
+```{r}
+ggplot(pData(sce), aes(x = log10_total_counts, 
+                       colour = gini_ambient_genes_l1 < 0.8)) +
+    geom_density() 
+```
+
+```{r}
+ggplot(pData(sce), aes(x = gini_ambient_genes_l1, y = gini_ambient_genes_l2,
+                       colour = total_features)) +
+    geom_point() + viridis::scale_color_viridis()
+```
+
+
+
+```{r}
+p1 <- ggplot(pData(sce), aes(x = log10_total_counts, y = gini_ambient_genes_l1,
+                       colour = gini_all_genes)) +
+    geom_point() + viridis::scale_color_viridis() +
+    theme(legend.position = "bottom")
+p2 <- ggplot(pData(sce), aes(x = log10_total_counts, y = gini_ambient_genes_l2,
+                       colour = gini_all_genes)) +
+    geom_point() + viridis::scale_color_viridis() + 
+    theme(legend.position = "bottom")
+cowplot::plot_grid(p1, p2)
+```
+
+```{r}
+p1 <- ggplot(pData(sce), aes(x = total_features, y = gini_ubiq_genes,
+                       colour = gini_all_genes)) +
+    geom_point() + viridis::scale_color_viridis() +
+    theme(legend.position = "bottom")
+p2 <- ggplot(pData(sce), aes(x = total_features, y = gini_ambient_genes,
+                       colour = gini_all_genes)) +
+    geom_point() + viridis::scale_color_viridis() + 
+    theme(legend.position = "bottom")
+cowplot::plot_grid(p1, p2)
+```
+
+# Covariance analyses
+
+```{r}
+sce_1000 <- sce[fData(sce)$ambient_gene_l1, 1:1000]
+d1 <- dist(as.matrix(t(exprs(sce_1000))))
+mds1 <- cmdscale(d1, k = 3)
+redDim(sce_1000) <- mds1
+plotReducedDim(sce_1000, colour_by = "total_features")
+```
+
+```{r}
+d2 <- dist(as.matrix(t(exprs(sce_1000))), method = "canberra")
+mds2 <- cmdscale(d2, k = 3)
+redDim(sce_1000) <- mds2
+plotReducedDim(sce_1000, colour_by = "total_features")
+```
+
+```{r}
+d3 <- dist(as.matrix(t(exprs(sce_1000))), method = "binary")
+mds3 <- cmdscale(d3, k = 3)
+redDim(sce_1000) <- mds3
+plotReducedDim(sce_1000, colour_by = "total_features")
+```
+
+
+```{r}
+sce_good <- sce[, sce$total_features > 1000 & sce$total_counts > 2000]
+sce_bad <- sce[, sce$total_features < 1000 | sce$total_counts < 2000]
+bad_profile_exprs <- matrixStats::rowMedians(exprs(sce_bad))
+bad_profile_counts <- matrixStats::rowMedians(counts(sce_bad))
+```
+
+```{r}
+score1 <- bad_profile_exprs %*% exprs(sce)
+sce$bad_score_exprs_pears <- score1[1,]
+
+score2 <- cor(exprs(sce), bad_profile_exprs, method = "spearman")
+
+sce$bad_score_exprs_spear <- score2[, 1]
+
+```
+
+
