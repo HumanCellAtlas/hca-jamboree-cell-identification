@@ -1,0 +1,6 @@
+*.rds binary
+*.Rds binary
+*.rda binary
+*.Rda binary
+*.Rdata binary
+*.xls binary
