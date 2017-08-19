@@ -1,0 +1,80 @@
+---
+title: "Task 1: First look"
+output: html_notebook
+---
+
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(pryr)
+library(ggjoy)
+library(ggthemes)
+```
+
+## Load datasets
+
+```{r}
+simu_barc_noise <- read_csv("../../jamboree/task1_simu/simu_barc_noise.txt.gz")
+```
+
+```{r}
+simdata_fnames <- dir("../../jamboree/task1_simu")
+simdata_fnames <- simdata_fnames[-length(simdata_fnames)]
+simstats_list <- list()
+for (fname in simdata_fnames) {
+    tmp_df <- read_csv(file.path("../../jamboree/task1_simu", fname))
+    colnames(tmp_df) <- c("gene", "barcode", "count")
+    tmp_stats <- group_by(tmp_df, barcode) %>%
+        summarise(total_counts = sum(count),
+                  mean_counts = mean(count),
+                  var_counts = var(count),
+                  genes_detected = sum(count > 0),
+                  prop_dropout = mean(count > 0)
+        )
+    simstats_list[[fname]] <- tmp_stats
+}
+names(simstats_list) <- gsub(".gz", "", names(simstats_list))
+for (nn in names(simstats_list)) {
+    simstats_list[[nn]] <- mutate(simstats_list[[nn]], simu = nn)
+}
+```
+
+```{r}
+saveRDS(simstats_list, file = "simu_barcode_stats.rds")
+```
+
+# Plots
+
+```{r}
+simstats_df <- bind_rows(simstats_list)
+```
+
+```{r}
+p1 <- ggplot(simstats_df, aes(x = log10(total_counts), y = simu, fill = simu)) +
+    geom_joy() + theme_joy() + scale_fill_tableau(palette = "tableau20") +
+    ylab("Simulated dataset") + ggtitle("Dist. of total counts")
+p1
+```
+
+```{r}
+p2 <- ggplot(simstats_df, aes(x = log10(genes_detected), y = simu, fill = simu)) +
+    geom_joy() + theme_joy() + scale_fill_tableau(palette = "tableau20") +
+    ylab("Simulated dataset") + ggtitle("Dist. of genes detected")
+p2
+```
+
+```{r}
+p3 <- ggplot(simstats_df, aes(y = log10(genes_detected), 
+                              x = log10(total_counts), colour = simu)) +
+    facet_wrap(~simu, nrow = 4) +
+    geom_point(alpha = 0.3) + theme_bw() + 
+    scale_color_tableau(palette = "tableau20") +
+    ylab("genes detected (log10 scale") + ylab("total counts (log10 scale") + 
+    ggtitle("Dist. of genes detected")
+p3
+```
+
+
+
+
