@@ -1,0 +1,402 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[top=0.85in,left=2.75in,footskip=0.75in,marginparwidth=2in]{geometry}
+
+% use Unicode characters - try changing the option if you run into troubles with special characters (e.g. umlauts)
+\usepackage[utf8]{inputenc}
+
+% clean citations
+\usepackage{cite}
+
+% hyperref makes references clicky. use \url{www.example.com} or \href{www.example.com}{description} to add a clicky url
+\usepackage{nameref,hyperref}
+
+% line numbers
+\usepackage[right]{lineno}
+
+% improves typesetting in LaTeX
+\usepackage{microtype}
+\DisableLigatures[f]{encoding = *, family = * }
+
+% text layout - change as needed
+\raggedright
+\setlength{\parindent}{0.5cm}
+\textwidth 5.25in 
+\textheight 8.75in
+
+% Remove % for double line spacing
+%\usepackage{setspace} 
+%\doublespacing
+
+% use adjustwidth environment to exceed text width (see examples in text)
+\usepackage{changepage}
+
+% adjust caption style
+\usepackage[aboveskip=1pt,labelfont=bf,labelsep=period,singlelinecheck=off]{caption}
+
+% remove brackets from references
+\makeatletter
+\renewcommand{\@biblabel}[1]{\quad#1.}
+\makeatother
+
+% headrule, footrule and page numbers
+\usepackage{lastpage,fancyhdr,graphicx}
+\usepackage{epstopdf}
+\pagestyle{myheadings}
+\pagestyle{fancy}
+\fancyhf{}
+\rfoot{\thepage/\pageref{LastPage}}
+\renewcommand{\footrule}{\hrule height 2pt \vspace{2mm}}
+\fancyheadoffset[L]{2.25in}
+\fancyfootoffset[L]{2.25in}
+
+% use \textcolor{color}{text} for colored text (e.g. highlight to-do areas)
+\usepackage{color}
+
+% define custom colors (this one is for figure captions)
+\definecolor{Gray}{gray}{.25}
+
+% this is required to include graphics
+\usepackage{graphicx}
+
+% use if you want to put caption to the side of the figure - see example in text
+\usepackage{sidecap}
+
+% use for have text wrap around figures
+\usepackage{wrapfig}
+\usepackage[pscoord]{eso-pic}
+\usepackage[fulladjust]{marginnote}
+\reversemarginpar
+
+% Adding multirow.
+\usepackage{multirow}
+
+% Other required things:
+\usepackage{color}
+\usepackage{subcaption}
+\captionsetup[subfigure]{justification=centering}
+\newcommand{\beachmat}{\textit{beachmat}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\newcommand{\suppfigsimpleaccess}{1}
+\newcommand{\suppfigsparseschem}{2}
+\newcommand{\suppfigsparsecol}{3}
+\newcommand{\suppfighdflayout}{4-5}
+\newcommand{\suppfigtenx}{6}
+
+\newcommand{\suppseclayoutoptim}{1}
+\newcommand{\suppseclayouttest}{2}
+
+% document begins here
+\begin{document}
+\vspace*{0.35in}
+
+% title goes here:
+\begin{flushleft}
+{\Large
+    \textbf\newline{On the correct detection of empty droplets in droplet-based single-cell RNA sequencing protocols}
+}
+\newline
+
+% authors go here:
+%\\
+Aaron T. L. Lun\textsuperscript{1,*},
+Samantha Riesenfeld\textsuperscript{2,*},
+Tallulah Andrews\textsuperscript{3,*},
+The Phuong Dao\textsuperscript{4,*},
+Tomas Gomes\textsuperscript{3,*}
+and others
+\\
+\bigskip
+\bf{1} Cancer Research UK Cambridge Institute, University of Cambridge, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom \\
+\bf{2} Something... Broad? \\
+\bf{3} Wellcome Trust Sanger Institute, Wellcome Genome Campus, Hinxton, Cambridge CB10 1SA, United Kingdom \\
+\bf{4} Something... Columbia?
+\\
+\bigskip
+* These authors contributed equally to this work.
+
+\end{flushleft}
+
+\section*{Introduction}
+Recent advances in droplet-based protocols have revolutionized the field of single-cell transcriptomics by allowing tens of thousands of cells to be profiled in a single assay \cite{macosko2015highly,klein2015droplet,zheng2017massively}.
+In these technologies, individual cells are captured into aqueous droplets in a water-in-oil emulsion.
+Each droplet also contains a co-captured bead with primers for reverse transcription, where all primers on a single bead contain a cell barcode that is (effectively) unique to that bead.
+The droplets serve as isolated reaction chambers in which cell lysis and reverse transcription are performed to obtain barcoded cDNA.
+This is followed by breaking of the emulsion, amplification of the cDNA and construction of a sequencing library.
+After sequencing, debarcoding is performed based on the cell barcode observed in each read sequence.
+This yields an expression profile for each cell, typically in the form of unique molecular identifier (UMI) counts \cite{islam2014quantitative} for all annotated genes. 
+The use of droplets increases throughput by at least an order of magnitude compared to protocols based on plates \cite{picelli2013smartseq2} or conventional microfluidics \cite{pollen2014low}, which is appealing for large-scale projects such as the Human Cell Atlas \cite{regev2017human}.
+
+That said, the complexity of the sequencing data from droplet-based technologies poses a number of interesting challenges for low-level data processing.
+One such challenge is the identification and removal of cell barcodes corresponding to empty droplets.
+An empty droplet does not contain a cell but will still contain ``ambient'' RNA \cite{macosko2015highly}, i.e., cell-free transcripts in the solution in which the cells are suspended.
+Ambient RNA may be actively secreted by cells or released upon cell lysis, the latter of which is particularly likely given the stresses of dissociation.
+The presence of ambient RNA means that many empty droplets will contain material for reverse transcription and library preparation, resulting in non-zero total UMI counts for the corresponding barcodes.
+However, the resulting expression profiles do not originate from any single cell and need to be removed prior to further analysis to avoid misleading conclusions.
+
+Existing methods for removing empty droplets assume that droplets containing genuine cells should have more RNA, resulting in larger total UMI counts for the corresponding barcodes.
+Zheng \textit{et al.} \cite{zheng2017massively} remove all barcodes with total counts below 10\% of the 99\textsuperscript{th} percentile of the $Y$ largest total counts (where $Y$ is defined as the expected number of cells to be captured on the Chromium device).
+Macosko \textit{et al.} \cite{macosko2015highly} set the threshold at the inflection point in the cumulative fraction of reads with respect to increasing total count.
+While simple, the use of a one-dimensional filter on the total UMI count is suboptimal as it may discard small cells with low RNA content.
+Droplets containing small cells may not be easily distinguishable from large empty droplets in terms of the total number of transcripts.
+This problem is exacerbated by variable capture and amplification efficiency across droplets, which further mixes the distributions of total counts between empty and non-empty droplets.
+A simple threshold on the total count forces the researcher into a difficult choice between the loss of small cells or an increase to the number of artifactual ``cells'' composed of ambient RNA.
+
+In this report, we propose a new method for detecting empty droplets in droplet-based single-cell RNA sequencing (scRNA-seq) data.
+We construct a profile of the ambient pool of RNA, and test each barcode for deviations from this profile using a Poisson-based model for the count distribution.
+Barcodes with significant deviations are considered to be genuine cells, thus allowing recovery of cells with low total RNA content and small total UMI counts.
+We combine our approach with an inflection point filter to ensure that barcodes with large total counts are always retained.
+Using a variety of simulations, we demonstrate that our method outperforms any simple threshold on the total UMI count.
+We also apply our method to several real data sets where we are able to recover more cells from both existing and new cell types.
+
+\section*{Description of the method}
+
+\subsection*{Testing for deviations from the ambient profile}
+To construct the profile for the ambient RNA pool, we consider a threshold $T$ on the total UMI count.
+The set $\mathcal{D}$ of all barcodes with total counts less than $T$ are considered to represent empty droplets.
+The exact choice of $T$ does not matter, as long as (i) it is small enough so that droplets with genuine cells do not have total counts below $T$,
+and (ii) there are sufficient counts to obtain a precise estimate of the ambient profile.
+A simple approach is to define empty droplets from all but the top 100,000 barcodes with the largest total counts, under the assumption that fewer than 100,000 cells are captured in any run.
+We stress that $T$ is not the same as the threshold used in existing methods, as we make no statement on barcodes with total counts greater than $T$ at this point.
+
+The ambient profile is constructed by summing counts for each gene across $\mathcal{D}$.
+Let $y_{gb}$ be the count for gene $g$ in barcode $b$.
+We define the ambient count as 
+\[
+    A_{g} = \sum_{b \in \mathcal{D}} y_{gb} \;,
+\]
+yielding a count vector $\mathbf{A} = (A_1, \dots, A_N)$ for all $N$ genes.
+(We assume that any gene with counts of zero for all barcodes has already been filtered out, as this provides no information for distiguishing between barcodes.)
+We apply the Good-Turing algorithm to $\mathbf{A}$ to obtain the posterior expectation $\tilde{p}_g$ of the proportion of counts assigned to $g$ \cite{gale1995good}, using the \texttt{goodTuringProportions} function in the \textsf{edgeR} package \cite{robinson2010edgeR}.
+This ensures that genes with zero counts in the ambient pool have non-zero proportions, avoiding the possibility of obtaining likelihoods of zero in downstream calculations.
+
+Each barcode with a total count above $T$ is then fitted to this ambient profile.
+Consider a barcode $b$ with a total count $t_b$, corresponding to an empty droplet.
+For this barcode, we assume that the count for each gene follows a Poisson distribution with mean $\lambda_{gb} = \tilde{p}_g t_b$.
+This is based on random sampling of free-floating transcripts in solution into the empty droplets.
+We also assume that the sampling procedure is independent between genes.
+The deviance of the fit for this barcode is written as
+\[
+    D_b = 2 \left[ \sum_{g} y_{gb} \log\left(\frac{y_{gb}}{\lambda_{gb}}\right) - y_{gb} + \lambda_{gb} \right] \;,
+\]
+where the sum is taken across all genes with at least one non-zero count.
+
+Based on generalized linear model theory, $D_b$ should approximately follow a $\chi^2_N$ distribution under the null hypothesis, i.e., if the barcode truly originates from an empty droplet.
+One could then reject the null hypothesis by computing the upper tail probability of the $\chi^2_N$ distribution at $D_b$.
+However, this approach is not reliable in practice, possibly due to the failure of the saddlepoint approximation at low counts.
+We instead use a Monte Carlo approach to determine the distribution of $D_b$ under the null:
+\begin{enumerate}
+    \item Let the largest value of $t_b$ be $t_M$.
+        Define a tolerance $\tau$, and split the range $[\log_2(T)-\tau, \log_2(t_M)+\tau]$ into $S$ equidistant points.
+        $S$ should be chosen such that the interval $[\log_2(t_b) - \tau, \log_2(t_b)+\tau]$ for any $b$ contains $R=10^5$ points.
+    \item Let point $s$ have a total count of $t^*_s$. 
+        For each gene $g$, randomly sample a count from a Poisson distribution with mean $\tilde{p}_g t^*_s$.
+        Compute the deviance $D^*_s$ from the resulting count vector, using the same expression as described for $D_b$.
+    \item Fit a trend to $D^*_s$ against $\log_2(t^*_s)$ for all points.
+        We use a loess smoother with degree 1 and span 0.2, though any smoothing algorithm can be used.
+        This yields a function $f(.)$, which returns the expected deviance at a given log-total.
+        We also obtain the residuals from the trend, which we denote as $r^*_s$.
+    \item For each barcode $b$, compute the deviation from the trend as $r_{b} = D_b/f(\log_2(t_b))$.
+        We identify all points with $\log_2(t^*_s)$ values in the interval $[\log_2(t_b) - \tau, \log_2(t_b)+\tau]$.
+        Denote $R_{b}$ as the number of points in this interval where $r^*_s \ge r_{b}$.
+        We use the method of Phipson and Smyth \cite{phipson2010permutation} to compute a $p$-value for $b$ as
+        \[
+            P_b = \frac{R_b + 1}{R + 1}
+        \]
+\end{enumerate}
+This approach allows us to obtain permutation $p$-values for each barcode in a computationally efficient manner.
+$R$ and $\tau$ determine the trade-off between speed and accuracy and can be set to arbitrarily large and small values, respectively, if computation time is no issue. 
+In particular, larger values of $R$ improve the precision with which $P_b$ is calculated, while smaller values of $\tau$ improve accuracy in the presence of heteroskedasticity in the distribution of $D^*_s$ with respect to increasing $t^*_s$.
+
+\subsection*{Detecting the knee point in the log-totals}
+The procedure described above will identify barcodes that have count profiles that are significantly different from the ambient pool of RNA.
+This will be the case for most cell-containing droplets, as the ambient pool is formed from many (lysed) cells and is unlikely to be representative of any single cell.
+However, it is possible for some cell-containing droplets to have ambient-like expression profiles.
+This can occur if the cell population is highly homogeneous or if one cell subpopulation contributes disproportionately to the ambient pool, e.g., if it is more prone to lysis.
+Sequencing errors in the cell barcodes may also bias the estimates of the ambient proportions, by misassigning counts from cell-containing droplets to barcodes with low UMI totals.
+This may result in spurious similarities between cells and the estimated ambient profile.
+
+If we apply our procedure directly, barcodes corresponding to ambient-like cell-containing droplets will be incorrectly filtered out.
+To avoid this, we combine our procedure with a conventional threshold on the total UMI count.
+We rank all barcodes in order of decreasing $t_b$, and consider the function $f(.)$ of $\log(t_b)$ with respect to increasing log-rank.
+The first ``knee'' point in this function corresponds to a transition between a distinct subset of barcodes with large totals and the majority of barcodes with smaller totals.
+This is defined as the log-rank that maximizes the curvature
+\[
+    \frac{|f''|}{(1 + f'^2)^{1.5}} \;,
+\]
+and represents the point at which $f(.)$ begins to drop rapidly, marking the start of the transition between large and small totals.
+We use the knee point rather than the inflection point as the former is more conservative, thus avoiding empty droplets.
+
+Our assumption is that all barcodes with large totals must represent cell-containing droplets, regardless of whether its count profile resembles the ambient pool.
+This is based on the expectation that fluctuations in the size or capture efficiency of empty droplets should be smooth and not result in a distinct distribution of large totals.
+We define the upper threshold $U$ as the $t_b$ at the knee point and retain all barcodes with $t_b \ge U$, regardless of their $P_b$.
+This ensures recovery of barcodes corresponding to large cell-containing droplets. 
+We stress that this approach is different from existing methods due to the use of our testing procedure.
+Barcodes with $t_b$ below the knee point can still be retained if the count profile is significantly different from the ambient pool.
+This is not be possible with existing methods that would simply discard these barcodes.
+
+\subsection*{Correcting for multiple testing across barcodes}
+We correct for multiple testing by controlling the false discovery rate (FDR) using the Benjamini-Hochberg method \cite{benjamini1995controlling}.
+Putative cells are defined as those that have significantly poor fits to the ambient model at a specified FDR threshold.
+We set the FDR threshold to 1\% by default, meaning that the expected proportion of empty droplets in the set of retained barcodes is no greater than 1\%.
+Note that we only perform the correction on the $p$-values for barcodes that have $t_b$ greater than $T$.
+This reduces the severity of the correction given that barcodes with lower $t_b$ will always be discarded.
+Similarly, all barcodes with $t_b \ge U$ have their $p$-values set to zero during correction, as these barcodes are considered to be known true positives.
+
+\section*{Results}
+
+\subsection*{Performance on simulated data}
+We named our method ``EmptyDrops'' and proceeded to test it on simulated data.
+Simulations were performed by mixing two real droplet-based scRNA-seq data sets involving cells with different RNA content (see Methods).
+This resulted in a single data set containing two groups of cells with low and high RNA content, and an ambient pool of RNA composed of a mixture of transcripts from both data sets.
+EmptyDrops was consistently able to detect cells from both groups with a small FDR (Table~\ref{tab:sim}).
+In contrast, applying a threshold on the total UMI count was less effective at recovering cells from the smaller group.
+This is because barcodes corresponding to small cells with little RNA have similar total UMI counts as barcodes corresponding to large empty droplets with high levels of ambient RNA.
+The total UMI count cannot distinguish between these two possibilities, resulting in either reduced recall for the low-RNA group or a high false positive rate.
+This is demonstrated by the poor performance of the strategy used by 10X Genomics in their CellRanger software (Figures~\ref{fig:simdemo}, \ref{fig:simall}).
+
+\begin{table}[bt]
+    \caption{Performance of EmptyDrops on each simulation scenario with varying numbers of real cell barcodes from Group 2 (low RNA content).
+        The recall for each group represents the proportion of real cells that were detected by EmptyDrops.
+        The false discovery rate represents the proportion of detected barcodes that were empty droplets.
+    }
+    \begin{center}
+        \begin{tabular}{l r r r r r}
+            \hline
+            \textbf{Scenario} & \multicolumn{2}{c}{\textbf{Group 1}} & \multicolumn{2}{c}{\textbf{Group 2}} & \multicolumn{1}{c}{\textbf{FDR (\%)}} \\
+            & \textit{Number} & \textit{Recall (\%)} &  \textit{Number} & \textit{Recall (\%)} & \\
+            \hline
+            1  & 3285 & 99.85 &  205 &  96.10 & 0.00 \\ 
+            2  & 3285 & 99.85 &  432 &  93.52 & 0.00 \\
+            3  & 3285 & 99.88 &  815 &  93.74 & 0.01 \\
+            4  & 3285 & 99.88 & 1731 &  93.41 & 0.00 \\
+            5  & 3285 & 99.88 &  203 &  99.01 & 0.01 \\
+            6  & 3285 & 99.85 &  391 &  99.74 & 0.00 \\
+            7  & 3285 & 99.85 &  855 &  99.77 & 0.00 \\
+            8  & 3285 & 99.88 & 1708 &  99.41 & 0.00 \\
+            9  & 3285 & 99.85 &  180 & 100.00 & 0.00 \\
+            10 & 3285 & 99.88 &  430 & 100.00 & 0.00 \\
+            11 & 3285 & 99.85 &  810 & 100.00 & 0.00 \\
+            12 & 3285 & 99.88 & 1644 &  99.94 & 0.00 \\
+            13 & 3285 & 99.85 &  211 & 100.00 & 0.00 \\
+            14 & 3285 & 99.85 &  445 & 100.00 & 0.00 \\
+            15 & 3285 & 99.88 &  886 & 100.00 & 0.00 \\
+            16 & 3285 & 99.85 & 1702 & 100.00 & 0.00 \\
+            \hline
+        \end{tabular}
+    \end{center}
+    \label{tab:sim}
+\end{table}
+
+\begin{figure}[bt]
+\begin{center}
+    \includegraphics[width=0.49\textwidth]{pics/plot_6_1.png}
+    \includegraphics[width=0.49\textwidth]{pics/Total_Accuracy_1.png}
+\end{center}
+\caption{Behaviour of EmptyDrops and CellRanger in simulation scenario 6.
+    Left: deviance statistics for each barcode in the simulated data, plotted against the total UMI count.
+    Each barcode is represented by a point that is coloured according to whether it is a true positives, false positives or false negatives according to our method.
+    The expected deviance under the null is also shown, along with the threshold defined by CellRanger.
+    Right: recall of EmptyDrops and CellRanger for the two groups of cells in the simulated data.
+    Group 1 contains the cells with more RNA while group 2 contains smaller cells.
+}
+\label{fig:simdemo}
+\end{figure}
+
+\begin{figure}[bt]
+    \begin{center}
+        \includegraphics[width=\textwidth]{pics/Us_vs_Cr_Sim_Recall_1.png}
+    \end{center}
+    \caption{Comparison of recall between EmptyDrops (top) and CellRanger (bottom) in all simulation scenarios.
+    Groups 1 and 2 contain larger and smaller cells, respectively.}
+    \label{fig:simall}
+\end{figure}
+
+\subsection*{Performance on real data}
+We applied EmptyDrops to one channel of the 10X peripheral blood mononuclear cell (PBMC) data set \cite{zheng2017massively}.
+EmptyDrops was able to identify barcodes with low UMI totals, which would have been discarded by the CellRanger threshold (Figure~\ref{fig:realcall}). 
+This reflects the differences in performance observed in our simulations.
+Droplets containing small cells are indistinguishable from large empty droplets in terms of their total UMI counts, instead requiring a comparison of the expression profile to the ambient pool.
+Conversely, CellRanger detects a number of cells with large UMI totals that are not detected by EmptyDrops.
+This is attributable to the conservativeness of the knee-point threshold in EmptyDrops, which ensures that empty droplets are not inadvertently retained.
+
+\begin{figure}[bt]
+    \begin{center}
+        \includegraphics[width=0.49\textwidth]{pics/pbmcs_calls.png}
+        INSERT VENN HERE.
+    \end{center}
+    \caption{Behaviour of EmptyDrops and CellRanger on the 10X PBMC data set.
+        Left: deviance statistics for all barcodes in real data, where each barcode is coloured depending on whether it was detected by EmptyDrops.
+        The threshold defined by CellRanger is also shown.
+        Right: numbers of barcodes detected by either or both methods.
+    }
+    \label{fig:realcall}
+\end{figure}
+
+To explore the differences between methods in more detail, we generated a $t$-stochastic neighbour embedding (t-SNE) plot \cite{van2008visualizing} of all barcodes that were detected by either method.
+We observed that the CellRanger-only barcodes clustered with barcodes that were detected by both methods (Figure~\ref{fig:realtsne}).
+This suggests that the conservativeness of EmptyDrops can be largely ignored, as it only results in the loss of some cells from a cluster that would have been detected anyway.
+In contrast, the EmptyDrops-only barcodes formed their own cluster, such that the use of CellRanger would have resulted in the loss of an entire group of cells.
+This is not surprising as the total RNA content of a cell is often associated with its type/state.
+The ability of EmptyDrops to retain small cells means that it can capture biology that would have been lost with CellRanger.
+
+\begin{figure}
+    \begin{center}
+    \includegraphics[width=0.6\textwidth]{pics/pbmcs_ED_and_CR_tsne.png}
+    \end{center}
+    \caption{t-SNE plot of barcodes detected by either EmptyDrops or CellRanger.
+        Each barcode is represented by a point, and is coloured based on whether it was detected by both methods (grey), EmptyDrops only (yellow) or CellRanger only (pink).
+    } 
+    \label{fig:realtsne}
+\end{figure}
+
+\section*{Discussion}
+Droplet-based technologies are becoming increasingly popular for high-throughput single-cell transcriptomics.
+However, little work has been performed to develop computational methods for distinguishing genuine cells from empty droplets.
+Here, we describe EmptyDrops, a method to detect cell-containing barcodes based on significant deviation of the expression profiles from the pool of ambient RNA.
+We use simulated data to demonstrate that EmptyDrops outperforms the strategy that is currently implemented in the CellRanger software suite.
+Furthermore, EmptyDrops can recover biology in real 10X data that is lost using the CellRanger strategy.
+Our results indicate that EmptyDrops is effective for cell detection in droplet-based scRNA-seq data.
+
+A key assumption of our approach is that barcodes with very low UMI totals represent empty droplets.
+This allows us to use these barcodes to obtain an estimate of the ambient pool.
+However, this assumption may not be appropriate if the data set contains a subset of cells with very low RNA content.
+In such cases, the estimate of the ambient expression profile will be biased, though this bias is likely to be small as relatively few transcripts will be contributed by cells with low RNA content.
+Another potential source of bias may arise from sequencing errors in the cell barcode, such that transcripts from a cell-containing droplet are misassigned to an otherwise empty droplet.
+This is mitigated to some extent by the use of designed cell barcodes in the GemCode protocol, which allow for error correction in the barcode \cite{zheng2017massively}.
+However, it may be more of a problem in protocols where error correction of the barcodes is not possible \cite{macosko2015highly}.
+
+% Note that the detection drops down to a dribble near total=100 in the real data.
+% This is consistent with our assumptions.
+
+An interesting question is whether the output of EmptyDrops is compatible with existing scRNA-seq analysis workflows.
+In particular, many workflows recommend the removal of cells with low total numbers of expressed genes during quality control \cite{lun2016stepbystep,mccarthy2017scater}.
+This would potentially result in the loss of cells that are recovered by EmptyDrops, defeating the purpose of using EmptyDrops in the first place.
+Moreover, it remains to be seen whether downstream analyses can effectively model the very high frequency of zero counts in these small cells.
+With improved recovery of small cells from droplet data, modifications may be required to existing scRNA-seq analysis pipelines.
+
+\section*{Methods}
+
+\subsection*{Design of the simulations}
+We obtained raw barcode counts for two 10X data sets with XXX (high RNA content) and YYY cells (low RNA content).
+In each data set, we set a threshold on the total UMI count using the CellRanger approach.
+All barcodes with total counts above this threshold were considered to represent real cells, while all barcodes below this threshold were considered to represent empty droplets.
+Simulated data were generated by randomly sampling a number of real cell barcodes from the XXX and YYY data sets, which were treated as known real cells.
+To generate known empty droplets, we pooled the UMI counts for all empty droplet barcodes from both data sets. 
+For each empty droplet barcode in the original data sets, we sampled with replacement from the UMI pool to obtain a new count profile with the same total UMI count.
+These were added to the simulated data to represent known empty droplets.
+Different simulation scenarios were constructed by varying the number of real cell barcodes that were sampled from each group.
+
+We applied our EmptyDrops method to the simulated data to evaluate its performance.
+The recall was defined as the proportion of known real cells from each group that were successfully detected by our method.
+The observed false discovery rate was defined as the proportion of detected barcodes that were known empty droplets.
+We repeated this using the CellRanger approach, implemented as previously described \cite{zheng2017massively}.
+
+\subsection*{Analysis of the 10X PBMC data set}
+We obtained one channel of the 10X PBMC data set from ???, and defined cells from the raw barcode counts using the EmptyDrops and CellRanger methods.
+For the set of barcodes detected by either method, we generated a t-SNE plot from the library size-normalized expression profiles using the Rtsne package (settings?).
+
+\bibliography{ref.bib}
+\bibliographystyle{unsrt}
+
+\end{document}
